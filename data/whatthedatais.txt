@@ -1,0 +1,35 @@
+speakers.csv
+------------
+Hardware specs for every speaker in the basement DAC testbed, one row per
+physical driver. Columns: zone_id, speaker_name, type, freq_min, freq_max,
+sensitivity, impedance, power_handling, crossover_freq.
+
+Pulled straight from the manufacturer datasheets (Polk, JBL, Klipsch, Micca,
+Dayton). The crossover_freq column is only filled in for the subwoofer since
+that's the only zone where it actually matters - the rest are full-range.
+
+Zones in the testbed:
+  2 - 4x Polk RC80i (overhead, two L/R pairs)
+  3 - 2x JBL Stage A130 (bookshelf L/R pair)
+  4 - 2x Klipsch R-41M (horizontal-firing L/R pair)
+  5 - 2x Micca MB42X (horizontal-firing L/R pair)
+  7 - 1x Dayton SUB-1200 (subwoofer)
+
+training_data.csv
+-----------------
+The labeled data the KNN trains on. Each row is one song that we listened to
+through one zone, with the bass and treble knobs set to where it sounded best
+to us. Columns: zone_id, speaker_model, song_title, artist, volume, bass,
+treble, clarity.
+
+Built by hand over a bunch of listening sessions in the basement - same song
+gets played through every zone, knobs get turned until it sounds right, values
+get written down. The clarity column is our subjective 1-5 score for how good
+the result actually sounded (used as a sanity check, not as a model input).
+
+Bass and treble are in the controller's native -10 to +10 dB range. Volume is
+the controller setting at the time, kept roughly constant across sessions so
+it doesn't bias the tuning.
+
+For zone 7 (subwoofer) the treble column is always 0 since the sub physically
+can't reproduce treble.
