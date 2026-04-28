@@ -1,0 +1,12 @@
+zone_id,speaker_name,type,freq_min,freq_max,sensitivity,impedance,power_handling,crossover_freq
+2,Polk RC80i,standard,35,20000,89,8,100,
+2,Polk RC80i,standard,35,20000,89,8,100,
+2,Polk RC80i,standard,35,20000,89,8,100,
+2,Polk RC80i,standard,35,20000,89,8,100,
+3,JBL Stage A130,standard,55,20000,86,6,125,
+3,JBL Stage A130,standard,55,20000,86,6,125,
+4,Klipsch R-41M,standard,68,21000,90,8,200,
+4,Klipsch R-41M,standard,68,21000,90,8,200,
+5,Micca MB42X,standard,60,20000,85,4,75,
+5,Micca MB42X,standard,60,20000,85,4,75,
+7,Dayton SUB-1200,subwoofer,25,200,87,4,120,120
