@@ -1,0 +1,90 @@
+Overall Requirements
+
+Identify a real-world engineering/science problem and write a Python program to solve the problem.
+Use Jupyter Notebook for the main program with an extension of .ipynb. All other classes and functions should be divided into multiple .py files as modules and imported as needed.
+Data source: publicly available datasets with no IP issues. Alternatively, you can create your own dataset.
+Use Python version 3.14, 3.13, or 3.12.
+It’s a team project; 2-3 members per team. Team members need to make equal contributions to the project.
+Use GitHub as a code repository, and all the group members should be in the repository. Each group member should make at least 5 meaningful commits to the group repository during development. The meaningful commits contribute to program logic, design, testing, data handling, or documentation. Cosmetic edits (formatting/spacing/renaming only) do not count.
+ 
+
+Requirements (Part 1): your program must have all the following components:
+
+Have at least two meaningful, well-defined classes that have constructors, attributes, methods, and instance objects. These two classes must have a relationship: either inheritance or composition. Meaningful classes contain functional logic relevant to the problem (not empty or trivial structures).
+Define at least two meaningful, well-defined functions that contribute directly to solving the problem.
+Use at least two advanced Python libraries for data and processing, such as matplotlib, PyTorch, NumPy, or Pandas. The libraries must provide critical functionality to the program and cannot be used in a superfluous way.
+Include at least two distinct exception-handling scenarios (e.g., invalid input, file/data loading errors, runtime/math errors) and at least two functional Pytest test cases validating program logic.
+Perform some meaningful data I/O, such as reading from a file or from a database, etc.
+Use at least two loop statements (for or while) and two if statements demonstrating logical control flow.
+Use at least two mutable types (list, dict, set) and two immutable types (number, string, tuple).
+Implement __str__() and at least one additional operator overload (e.g., __add__, __len__, or __eq__).
+Include a proper docstring and meaningful comments for each class and each function. Docstrings must be placed immediately below the definition.
+The README file must have detailed information about the project, including:
+Project Title
+Team member names, emails, and Stevens IDs
+Project description, including project overview, dependencies/libraries, and file/module structure.
+How to run the program
+Main contributions of each team member
+ 
+
+Requirements (Part 2): your program must have at least four components from the following:
+
+At least one of the special functions: enumerate, map, zip, filter, lambda, or reduce.
+Comprehension for at least one data type, for example, list comprehension.
+At least one built-in library/module, e.g., time, random, math, itertools.
+One generator function or generator expression.
+Set operations.
+Recursion.
+__name__
+__getattr__
+ 
+
+Important Notices:
+
+Do not use any AI tools to design the project; Do not copy any existing projects; Do not download code from the Internet; Do not work with individuals outside of your team. Any discovered instances of these will be considered cheating, and appropriate actions will be taken according to the course syllabus.
+Be sure that you have tested the version of the program you wish to submit and make sure it works correctly. You will not be allowed to resubmit work after the deadline.
+ 
+
+Submissions
+
+May 6: project final submission (90 points) – one submission per team (only one member submits the proposal to Canvas)
+
+You must set the GitHub repository to public and submit the link of your repository on Canvas. The repository must contain all related files necessary to solve the identified problem. Late submissions are not accepted.
+
+The README file must have detailed information about the project, including: 1) Project Title, 2) team member names, emails, and Stevens IDs, 3) Project description, including project overview, dependencies/libraries, and file/module structure, 4) How to run the program, and 5) Main contributions of each team member.
+
+ 
+
+Grading Rubric
+
+Your final project submission will be graded largely based on whether it works correctly and meets all the requirements. Moreover, it will be graded based on your program style. This means that you should use docstrings, comments, and meaningful variable names.
+You must submit all the necessary files to execute your project. If the required files are not included and the TAs cannot execute and test your program, significant points will be deducted.
+Final project submission (90 points)
+Project submissions will not be graded if they do not meet the Overall Requirements.
+Correctness & Requirements (55 points)
+Program runs correctly without errors (15 points). The project should execute successfully. A working program is the foundation for all other grading.
+Part 1 requirements (30 points). Includes classes, functions, exception handling, data I/O, loops, use of libraries, docstrings, and a README. Each of these elements demonstrates fundamental Python programming skills.
+Part 2 requirements (10 points). The project must integrate at least four advanced features, such as comprehensions, operator overloading, generators, or built-in modules.
+Code Quality & Style (20 points)
+Proper code structure (modules, Jupyter Notebook, .py files) (5 points). Projects should separate code into meaningful files and modules, showing good organization.
+Meaningful variable names & consistent formatting (5 points). Variables and formatting should be clear and professional, making the code easy to follow.
+Clear docstrings and meaningful comments (5 points). Every function and class should have explanations so others can understand the purpose without reading line by line.
+Logical program flow (5 points). Code should be easy to read and logically structured, showing thoughtful design.
+Documentation & Presentation (15 points)
+README file with setup instructions (5 points). Users should be able to run the project easily by following the provided README file.
+Explanation of problem and solution approach (5 points). The submission should explain what problem is being solved and how the program addresses it.
+Proper file submission (all needed files included and organized) (5 points). All files must be complete, well-named, and organized so the graders can run and review the project without difficulty.
+Deductions:
+–20 points if the project cannot be executed due to missing files or errors in submission.
+–10 points if the README file or setup instructions are missing or incomplete.
+–10 points for failing to meet any major requirement, e.g., no classes, no exception handling, no use of advanced libraries.
+–10 points if it is determined that a team member did not make the required contributions.
+–10 points if it is not a team project.
+–5 points for poor programming style (unclear variable names, lack of comments, no docstrings). 
+Submission Checklist
+Notebook runs without errors
+All required modules/files included
+Requirements satisfied
+Exceptions handled
+Tests passing
+README complete
