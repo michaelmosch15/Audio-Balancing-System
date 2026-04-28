@@ -2,7 +2,7 @@
   AUDIO BALANCING SYSTEM FOR DIVERSE SPEAKER SETS — PROJECT ARCHITECTURE
 ================================================================================
   Michael Moschello, mmoschel@stevens.edu, 10479727
-  Michael Savo, msavo@stevens.edu, ADD STEVENS ID
+  Michael Savo, msavo@stevens.edu, 20026290
 ================================================================================
 
 TABLE OF CONTENTS
