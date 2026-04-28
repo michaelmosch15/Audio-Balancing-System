@@ -1,0 +1,826 @@
+================================================================================
+  AUDIO BALANCING SYSTEM FOR DIVERSE SPEAKER SETS — PROJECT ARCHITECTURE
+================================================================================
+  Michael Moschello, mmoschel@stevens.edu, 10479727
+  Michael Savo, msavo@stevens.edu, ADD STEVENS ID
+================================================================================
+
+TABLE OF CONTENTS
+  1. Project Overview
+  2. File / Module Structure
+  3. Class Design
+  4. Function Design
+  5. Data I/O Design
+  6. Library Usage
+  7. Exception Handling & Pytest
+  8. Control Flow (Loops / Conditionals)
+  9. Data Types (Mutable / Immutable)
+  10. Operator Overloads
+  11. Docstrings & Comments
+  12. README Outline
+  13. Requirement Traceability Matrix
+
+================================================================================
+1. PROJECT OVERVIEW
+================================================================================
+
+The system queries the Spotify Web API for a song's audio features — specifically
+loudness (dB) and energy (0–1) — then uses a per-zone K-Nearest Neighbors (KNN)
+classifier to predict the optimal bass and treble gain settings for each speaker
+zone in a 5-zone + subwoofer testbed.
+
+The KNN models are trained on user-provided CSV training data: rows of
+(loudness, energy, ideal_bass, ideal_treble) that the user has manually tuned
+while listening through each zone. At prediction time the system feeds the
+Spotify features for a new song into each zone's trained KNN and outputs the
+recommended gain values.
+
+Why loudness and energy?
+  • loudness (dB) — Spotify's integrated loudness of the full track. Quieter
+    tracks may need more gain from the speaker system; louder tracks may need
+    attenuation to avoid clipping on smaller drivers.
+  • energy (0–1) — Spotify's perceptual intensity metric. High-energy tracks
+    have stronger transients and more "punch," which interacts differently with
+    a subwoofer vs. overhead tweeters.
+
+Zones in scope:
+  Zone 2 — 2x left/right overhead speaker pairs
+  Zone 3 — 1x left/right speaker pair
+  Zone 4 — 1x horizontal firing speaker pair
+  Zone 5 — 1x horizontal firing speaker pair
+  Zone 7 — Subwoofer
+
+End-to-end flow:
+  1. Load speaker hardware specs per zone from speakers.csv.
+  2. Load per-zone KNN training data from training_data.csv.
+  3. Train one KNN model per zone (features: loudness, energy → labels:
+     bass_gain, treble_gain).
+  4. User enters a song name (and optionally artist).
+  5. System authenticates with the Spotify API via spotipy, searches for the
+     track, and retrieves its audio features (loudness, energy).
+  6. Each zone's KNN predicts a (bass, treble) gain setting for that song.
+  7. Results are printed to the console and visualized with Matplotlib.
+
+================================================================================
+2. FILE / MODULE STRUCTURE
+================================================================================
+
+SpeakerBalance/
+│
+├── data/
+│   ├── speakers.csv              # Speaker hardware specs per zone
+│   └── training_data.csv         # User-labeled training data per zone
+│                                 #   columns: zone_id, loudness, energy,
+│                                 #            ideal_bass, ideal_treble
+│
+├── src/
+│   ├── __init__.py
+│   ├── speaker.py                # Speaker and Subwoofer classes
+│   ├── zone.py                   # SpeakerZone class (composition)
+│   ├── spotify_client.py         # Spotify API wrapper (spotipy)
+│   ├── knn_model.py              # KNN training + prediction logic
+│   ├── balancer.py               # Orchestration: ties zones + KNN + Spotify
+│   └── visualizer.py             # Matplotlib visualization functions
+│
+├── tests/
+│   ├── __init__.py
+│   └── test_balancer.py          # Pytest test cases
+│
+├── main.py                       # Entry point — ties everything together
+├── requirements.txt              # spotipy, scikit-learn, numpy, pandas,
+│                                 #   matplotlib, pytest
+├── .env                          # SPOTIPY_CLIENT_ID, SPOTIPY_CLIENT_SECRET
+├── README.md                     # Full project documentation
+└── ARCHITECTURE.txt              # This file
+
+================================================================================
+3. CLASS DESIGN
+================================================================================
+
+Four classes total. Two required relationships are both satisfied:
+  • Inheritance:  Subwoofer inherits from Speaker
+  • Composition:  SpeakerZone contains a list of Speaker objects
+
+─────────────────────────────────────────────
+CLASS 1: Speaker  (src/speaker.py)
+─────────────────────────────────────────────
+Purpose:
+  Represents a single speaker unit with its hardware specifications.
+
+Constructor (__init__):
+  Parameters:
+    - name: str                    # e.g. "Polk RC80i"
+    - freq_min: float              # minimum frequency response in Hz
+    - freq_max: float              # maximum frequency response in Hz
+    - sensitivity: float           # sensitivity in dB (e.g. 89.0)
+    - impedance: float             # impedance in ohms (e.g. 8.0)
+    - power_handling: float        # max RMS power in watts
+
+Attributes:
+    - self.name          : str
+    - self.freq_range    : tuple   # (freq_min, freq_max)  ← IMMUTABLE
+    - self.sensitivity   : float
+    - self.impedance     : float
+    - self.power_handling: float
+
+Methods:
+    - supports_frequency(freq: float) -> bool
+        """Return True if the speaker can reproduce the given frequency."""
+
+    - bass_capability() -> float
+        """Score 0-1 rating how well this speaker handles bass (< 250 Hz).
+        Derived from how low freq_min goes and power_handling."""
+
+    - treble_capability() -> float
+        """Score 0-1 rating how well this speaker handles treble (> 4 kHz).
+        Derived from how high freq_max goes and sensitivity."""
+
+Operator Overloads:
+    - __str__() -> str
+        Returns a human-readable summary, e.g.:
+        "Speaker(Polk RC80i, 35Hz-20000Hz, 89dB, 8ohm)"
+
+    - __eq__(other) -> bool
+        Two speakers are equal if name and freq_range match.
+
+─────────────────────────────────────────────
+CLASS 2: Subwoofer(Speaker)  (src/speaker.py)
+  ** INHERITS FROM Speaker **
+─────────────────────────────────────────────
+Purpose:
+  Specialized speaker subclass for subwoofers with additional low-frequency
+  attributes. Overrides bass_capability to always return 1.0.
+
+Constructor (__init__):
+  Additional parameters beyond Speaker:
+    - crossover_freq: float        # crossover frequency in Hz (e.g. 120)
+
+Additional Attributes:
+    - self.crossover_freq: float
+
+Overridden Methods:
+    - bass_capability() -> float
+        """Subwoofers always score 1.0 for bass capability."""
+        return 1.0
+
+    - treble_capability() -> float
+        """Subwoofers score 0.0 for treble capability."""
+        return 0.0
+
+    - __str__() -> str
+        "Subwoofer(Dayton SUB-1200, 25Hz-200Hz, crossover=120Hz)"
+
+─────────────────────────────────────────────
+CLASS 3: SpeakerZone  (src/zone.py)
+  ** COMPOSITION — contains Speaker objects **
+─────────────────────────────────────────────
+Purpose:
+  Represents a physical zone containing one or more speaker pairs.
+  Aggregates speaker capabilities and holds the zone's trained KNN model.
+
+Constructor (__init__):
+  Parameters:
+    - zone_id: int                 # e.g. 2, 3, 4, 5, 7
+    - zone_name: str               # e.g. "Overhead Speakers"
+    - speakers: list[Speaker]      # ← MUTABLE list, COMPOSITION relationship
+
+Attributes:
+    - self.zone_id      : int          # IMMUTABLE number
+    - self.zone_name    : str          # IMMUTABLE string
+    - self.speakers     : list         # MUTABLE list of Speaker objects
+    - self.eq_settings  : dict         # MUTABLE dict {"bass": 0, "treble": 0}
+    - self.knn_model    : object       # Trained KNeighborsRegressor (set later)
+
+Methods:
+    - avg_bass_capability() -> float
+        """Average bass capability score across all speakers in the zone."""
+
+    - avg_treble_capability() -> float
+        """Average treble capability score across all speakers in the zone."""
+
+    - set_eq(bass: float, treble: float) -> None
+        """Set the recommended bass and treble gain for this zone."""
+
+    - get_freq_range() -> tuple
+        """Return (lowest_min, highest_max) across all speakers in zone."""
+
+Operator Overloads:
+    - __str__() -> str
+        "Zone 2 (Overhead Speakers): 4 speakers | Bass=+3dB, Treble=-2dB"
+
+    - __len__() -> int
+        Returns the number of speakers in the zone.
+
+    - __add__(other: SpeakerZone) -> SpeakerZone
+        Merges two zones into one combined zone (useful for testing).
+
+─────────────────────────────────────────────
+CLASS 4: SpotifyClient  (src/spotify_client.py)
+─────────────────────────────────────────────
+Purpose:
+  Wraps the spotipy library to authenticate with the Spotify Web API and
+  retrieve audio features for a given track.
+
+Constructor (__init__):
+  Parameters:
+    - client_id: str               # from .env / Spotify Developer Dashboard
+    - client_secret: str           # from .env / Spotify Developer Dashboard
+
+Attributes:
+    - self.client_id     : str
+    - self.client_secret : str
+    - self.sp            : spotipy.Spotify   # authenticated client object
+
+Methods:
+    - search_track(song_name: str, artist: str = None) -> dict
+        """Search Spotify for a track. Returns dict with track id, name, artist.
+        Raises ValueError if no results found."""
+
+    - get_audio_features(track_id: str) -> dict
+        """Fetch audio features for a track ID.
+        Returns dict with keys: loudness, energy (plus others available).
+        Raises ConnectionError on API failure."""
+
+    - get_song_features(song_name: str, artist: str = None) -> tuple
+        """Convenience method: search + fetch in one call.
+        Returns (loudness: float, energy: float) tuple."""
+
+Operator Overloads:
+    - __str__() -> str
+        "SpotifyClient(authenticated=True)"
+
+Note on authentication:
+  Uses spotipy.SpotifyClientCredentials (Client Credentials Flow).
+  No user login required — only reads public track metadata/features.
+  Credentials stored in .env file, loaded with os.environ or python-dotenv.
+
+================================================================================
+4. FUNCTION DESIGN
+================================================================================
+
+─────────────────────────────────────────────
+FUNCTION 1: train_zone_knn(zone_id, training_df, n_neighbors=3)
+  Location: src/knn_model.py
+─────────────────────────────────────────────
+Purpose:
+  Trains a scikit-learn KNeighborsRegressor for one zone using user-provided
+  training data. The model learns the mapping:
+      (loudness, energy) → (ideal_bass, ideal_treble)
+
+Parameters:
+    - zone_id: int                 # which zone to filter training data for
+    - training_df: pd.DataFrame    # full training dataset (all zones)
+    - n_neighbors: int             # K value for KNN (default 3)
+
+Returns:
+    - sklearn.neighbors.KNeighborsRegressor   # fitted model
+
+Logic:
+    1. Filter training_df to rows where zone_id matches.
+    2. Extract feature matrix X as NumPy array: columns [loudness, energy].
+    3. Extract target matrix y as NumPy array: columns [ideal_bass, ideal_treble].
+    4. Validate that there are enough samples (>= n_neighbors).
+    5. Fit KNeighborsRegressor(n_neighbors=n_neighbors).fit(X, y).
+    6. Return the fitted model.
+
+Uses:
+    - scikit-learn (KNeighborsRegressor) — advanced library #1
+    - NumPy arrays for X, y feature/target matrices
+    - Pandas DataFrame filtering
+
+─────────────────────────────────────────────
+FUNCTION 2: predict_zone_eq(zone, loudness, energy)
+  Location: src/knn_model.py
+─────────────────────────────────────────────
+Purpose:
+  Given a SpeakerZone (with a trained KNN model attached) and a song's
+  Spotify audio features, predict the optimal bass and treble gain.
+
+Parameters:
+    - zone: SpeakerZone            # must have zone.knn_model set
+    - loudness: float              # Spotify loudness in dB (e.g. -5.2)
+    - energy: float                # Spotify energy 0-1 (e.g. 0.78)
+
+Returns:
+    - tuple: (bass_gain: float, treble_gain: float)  clamped to [-10, +10]
+
+Logic:
+    1. Build feature vector: np.array([[loudness, energy]])
+    2. Call zone.knn_model.predict(feature_vector)
+    3. Unpack prediction → (bass, treble)
+    4. np.clip to [-10, +10] range (controller hardware limit)
+    5. zone.set_eq(bass, treble)
+    6. Return (bass, treble) tuple
+
+─────────────────────────────────────────────
+ADDITIONAL FUNCTIONS
+─────────────────────────────────────────────
+
+FUNCTION 3: load_speakers_from_csv(filepath) — src/speaker.py
+  Reads speaker hardware specs from CSV using Pandas.
+  Returns a list of Speaker/Subwoofer objects.
+  Iterates rows with a for loop; uses if/else to pick Speaker vs Subwoofer.
+
+FUNCTION 4: build_zones(speakers_list) — src/zone.py
+  Groups speaker objects into SpeakerZone instances by zone_id.
+  Returns a dict {zone_id: SpeakerZone}.
+
+FUNCTION 5: load_training_data(filepath) — src/knn_model.py
+  Reads training_data.csv into a Pandas DataFrame.
+  Validates required columns exist.
+  Returns the DataFrame.
+
+FUNCTION 6: visualize_eq_recommendations(zones, song_name) — src/visualizer.py
+  Creates a grouped bar chart (Matplotlib) showing bass/treble gain per zone.
+  Includes the song name in the chart title.
+
+FUNCTION 7: run_balancer(zones, loudness, energy) — src/balancer.py
+  Iterates over all zones and calls predict_zone_eq for each.
+  Returns summary dict of all zone EQ settings.
+
+================================================================================
+5. DATA I/O DESIGN
+================================================================================
+
+─── INPUT FILE 1: data/speakers.csv ───
+
+Hardware specifications. Loaded with pandas.read_csv().
+
+Format (header + example rows):
+  zone_id,speaker_name,type,freq_min,freq_max,sensitivity,impedance,power_handling,crossover_freq
+  2,Polk RC80i,standard,35,20000,89,8,100,
+  2,Polk RC80i,standard,35,20000,89,8,100,
+  2,Polk RC80i,standard,35,20000,89,8,100,
+  2,Polk RC80i,standard,35,20000,89,8,100,
+  3,JBL Stage A130,standard,55,20000,86,6,125,
+  3,JBL Stage A130,standard,55,20000,86,6,125,
+  4,Klipsch R-41M,standard,68,21000,90,8,200,
+  4,Klipsch R-41M,standard,68,21000,90,8,200,
+  5,Micca MB42X,standard,60,20000,85,4,75,
+  5,Micca MB42X,standard,60,20000,85,4,75,
+  7,Dayton SUB-1200,subwoofer,25,200,87,4,120,120
+
+─── INPUT FILE 2: data/training_data.csv ───
+
+User-labeled training data. Each row represents a song the user has listened
+to on a specific zone and manually set the ideal bass/treble gain.
+
+The Spotify features (loudness, energy) are recorded alongside the ideal
+settings so the KNN can learn the pattern for each zone's speakers.
+
+Format (header + example rows):
+  zone_id,song_title,loudness,energy,ideal_bass,ideal_treble
+  2,Bohemian Rhapsody,-9.4,0.40,2,1
+  2,In Da Club,-4.0,0.90,-3,5
+  2,Blinding Lights,-5.6,0.73,0,3
+  2,Stairway to Heaven,-14.0,0.30,4,-1
+  2,Sicko Mode,-3.2,0.83,-4,4
+  2,Lovely Day,-10.1,0.55,3,0
+  2,Bad Guy,-5.3,0.68,-2,3
+  2,Take Five,-16.2,0.25,5,-2
+  3,Bohemian Rhapsody,-9.4,0.40,1,2
+  3,In Da Club,-4.0,0.90,-5,3
+  3,Blinding Lights,-5.6,0.73,-1,4
+  3,Stairway to Heaven,-14.0,0.30,3,0
+  3,Sicko Mode,-3.2,0.83,-6,2
+  3,Lovely Day,-10.1,0.55,2,1
+  3,Bad Guy,-5.3,0.68,-3,2
+  3,Take Five,-16.2,0.25,4,-1
+  4,Bohemian Rhapsody,-9.4,0.40,0,3
+  4,In Da Club,-4.0,0.90,-4,4
+  ...  (similar rows for zones 4, 5, 7)
+  7,Bohemian Rhapsody,-9.4,0.40,5,0
+  7,In Da Club,-4.0,0.90,8,0
+  7,Sicko Mode,-3.2,0.83,7,0
+  ...
+
+Notes on training data:
+  • Zone 7 (subwoofer) will typically have ideal_treble = 0 since it cannot
+    reproduce treble, and high ideal_bass for bass-heavy tracks.
+  • The user builds this CSV over time by listening and tuning.
+  • A minimum of ~5-8 songs per zone is recommended for decent KNN accuracy;
+    more data improves predictions.
+
+Loaded with: pandas.read_csv()
+
+─── INPUT SOURCE 3: Spotify Web API (runtime) ───
+
+At runtime, the user enters a song name. The system calls:
+  1. sp.search(q=song_name, type='track', limit=1)  → gets track ID
+  2. sp.audio_features(track_id)                     → gets feature dict
+
+Key fields extracted from Spotify audio_features response:
+  {
+    "loudness": -5.883,            # integrated loudness in dB (typ. -60 to 0)
+    "energy": 0.735,               # perceptual intensity 0.0 to 1.0
+    "danceability": 0.554,         # (available but not used in v1)
+    "tempo": 171.005,              # (available but not used in v1)
+    ...
+  }
+
+Only loudness and energy are used as KNN features.
+Other Spotify fields are available for future expansion.
+
+─── OUTPUT ───
+
+Console:  Printed EQ recommendations per zone, e.g.:
+  Song: "Blinding Lights" by The Weeknd
+  Spotify Features — Loudness: -5.6 dB | Energy: 0.73
+  ─────────────────────────────────────────
+  Zone 2 (Overhead):   Bass = +0 dB  |  Treble = +3 dB
+  Zone 3 (Bookshelf):  Bass = -1 dB  |  Treble = +4 dB
+  Zone 4 (Horizontal): Bass = -2 dB  |  Treble = +3 dB
+  Zone 5 (Horizontal): Bass = +1 dB  |  Treble = +2 dB
+  Zone 7 (Subwoofer):  Bass = +6 dB  |  Treble =  0 dB
+
+Chart:  Matplotlib grouped bar chart saved/displayed showing gain per zone.
+
+================================================================================
+6. LIBRARY USAGE
+================================================================================
+
+LIBRARY 1: scikit-learn  (sklearn)
+  Where: src/knn_model.py — train_zone_knn(), predict_zone_eq()
+  How:
+    - from sklearn.neighbors import KNeighborsRegressor
+    - KNeighborsRegressor(n_neighbors=K) to build model
+    - model.fit(X, y) to train on (loudness, energy) → (bass, treble)
+    - model.predict(np.array([[loudness, energy]])) at inference time
+    - Multi-output regression: y has 2 columns (bass, treble) — sklearn
+      handles this natively with KNeighborsRegressor.
+  Why it's critical:
+    The entire recommendation engine is a KNN classifier/regressor.
+    Without scikit-learn there is no prediction capability.
+
+LIBRARY 2: Matplotlib
+  Where: src/visualizer.py — visualize_eq_recommendations()
+  How:
+    - plt.bar() grouped bar chart: zones on x-axis, bass/treble bars
+    - plt.xlabel(), plt.ylabel(), plt.title(), plt.legend()
+    - Color-coded bars (blue = bass, orange = treble)
+    - plt.axhline(y=0) for the zero-gain baseline
+    - plt.savefig() and/or plt.show()
+    - Title includes song name + Spotify features
+  Why it's critical:
+    Provides the visual output of the system. Without it the user has only
+    text output and cannot quickly compare zone settings.
+
+ADDITIONAL LIBRARIES (supporting, also advanced):
+
+LIBRARY 3: spotipy
+  Where: src/spotify_client.py
+  How:
+    - spotipy.Spotify(client_credentials_manager=...) for auth
+    - sp.search() to find tracks
+    - sp.audio_features() to get loudness/energy
+  Why it's critical:
+    Provides the real-time song data that feeds the KNN. Without it the user
+    would have to manually enter loudness/energy values.
+
+LIBRARY 4: NumPy
+  Where: src/knn_model.py, src/balancer.py
+  How:
+    - np.array() to build feature matrix X and target matrix y
+    - np.clip() to clamp predicted gain to [-10, +10]
+    - Array reshaping for sklearn predict input
+  Why it's critical:
+    scikit-learn requires NumPy arrays. Also used for numerical clamping.
+
+LIBRARY 5: Pandas
+  Where: src/speaker.py, src/knn_model.py
+  How:
+    - pd.read_csv() to load speakers.csv and training_data.csv
+    - DataFrame filtering (df[df["zone_id"] == zone_id])
+    - .iterrows() for building objects from rows
+    - .values to extract NumPy arrays for sklearn
+
+================================================================================
+7. EXCEPTION HANDLING & PYTEST
+================================================================================
+
+─── EXCEPTION SCENARIO 1: Spotify API Errors ───
+  Location: src/spotify_client.py — search_track(), get_audio_features()
+  Trigger:  Song not found on Spotify, API rate limit, network failure
+  Code:
+    try:
+        results = self.sp.search(q=song_name, type='track', limit=1)
+    except spotipy.exceptions.SpotifyException as e:
+        raise ConnectionError(f"Spotify API error: {e}")
+
+    if not results['tracks']['items']:
+        raise ValueError(f"No track found on Spotify for: '{song_name}'")
+
+─── EXCEPTION SCENARIO 2: Training Data / File Loading Error ───
+  Location: src/knn_model.py — load_training_data(), train_zone_knn()
+  Trigger:  training_data.csv missing, malformed, or too few samples for a zone
+  Code:
+    try:
+        df = pd.read_csv(filepath)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Training data file not found: {filepath}")
+
+    zone_data = df[df["zone_id"] == zone_id]
+    if len(zone_data) < n_neighbors:
+        raise ValueError(
+            f"Zone {zone_id} has only {len(zone_data)} training samples, "
+            f"need at least {n_neighbors} for KNN with k={n_neighbors}"
+        )
+
+─── EXCEPTION SCENARIO 3 (bonus): Invalid Spotify Credentials ───
+  Location: src/spotify_client.py — __init__()
+  Trigger:  Missing or invalid SPOTIPY_CLIENT_ID / SPOTIPY_CLIENT_SECRET
+  Code:
+    if not client_id or not client_secret:
+        raise ValueError("Spotify credentials not set. Check .env file.")
+
+─── PYTEST TEST CASE 1: test_knn_prediction_range ───
+  Location: tests/test_balancer.py
+  Purpose:  Verify that KNN predictions are always clamped to [-10, +10].
+  Logic:
+    - Build a small training DataFrame with extreme values
+    - Train a KNN for a test zone
+    - Predict with various (loudness, energy) inputs
+    - Assert -10 <= bass <= 10 and -10 <= treble <= 10
+
+─── PYTEST TEST CASE 2: test_subwoofer_treble_zero ───
+  Location: tests/test_balancer.py
+  Purpose:  Verify the subwoofer zone (Zone 7) always predicts ~0 treble.
+  Logic:
+    - Build training data for zone 7 where ideal_treble is always 0
+    - Train KNN, predict for a new song
+    - Assert treble_gain == 0 (or very near 0)
+
+─── ADDITIONAL TEST IDEAS ───
+  - test_speaker_equality: Two Speaker objects with same name/freq are __eq__
+  - test_zone_len: __len__ returns correct speaker count
+  - test_train_insufficient_data: ValueError when < k training samples
+  - test_spotify_song_not_found: ValueError on nonsense song title
+  - test_load_training_csv_missing: FileNotFoundError on bad path
+
+================================================================================
+8. CONTROL FLOW — LOOPS & CONDITIONALS
+================================================================================
+
+─── LOOP 1: FOR loop — Training a KNN per zone ───
+  Location: src/balancer.py — run_balancer() / main.py
+    for zone_id, zone in zones.items():
+        model = train_zone_knn(zone_id, training_df, n_neighbors=3)
+        zone.knn_model = model
+
+─── LOOP 2: FOR loop — Predicting EQ for all zones ───
+  Location: src/balancer.py — run_balancer()
+    for zone_id, zone in zones.items():
+        bass, treble = predict_zone_eq(zone, loudness, energy)
+        results[zone_id] = {"bass": bass, "treble": treble}
+
+─── LOOP 3: FOR loop — Building Speaker objects from CSV rows ───
+  Location: src/speaker.py — load_speakers_from_csv()
+    for index, row in df.iterrows():
+        if row["type"] == "subwoofer":
+            speaker = Subwoofer(...)
+        else:
+            speaker = Speaker(...)
+        speakers.append(speaker)
+
+─── LOOP 4 (bonus): WHILE loop — User input retry ───
+  Location: main.py
+    while True:
+        song_name = input("Enter song name (or 'quit'): ")
+        if song_name.lower() == 'quit':
+            break
+        try:
+            loudness, energy = spotify_client.get_song_features(song_name)
+        except ValueError as e:
+            print(f"Error: {e}. Try again.")
+            continue
+        # predict and display...
+
+─── CONDITIONAL 1: IF — Subwoofer type check during CSV load ───
+  Location: src/speaker.py — load_speakers_from_csv()
+    if row["type"] == "subwoofer":
+        speaker = Subwoofer(name, freq_min, freq_max, ..., crossover_freq)
+    else:
+        speaker = Speaker(name, freq_min, freq_max, ...)
+
+─── CONDITIONAL 2: IF — Check sufficient training data before fitting ───
+  Location: src/knn_model.py — train_zone_knn()
+    if len(zone_data) < n_neighbors:
+        raise ValueError(...)
+
+─── CONDITIONAL 3: IF — Spotify search result validation ───
+  Location: src/spotify_client.py — search_track()
+    if not results['tracks']['items']:
+        raise ValueError(f"No track found for: '{song_name}'")
+
+================================================================================
+9. DATA TYPES — MUTABLE & IMMUTABLE
+================================================================================
+
+─── MUTABLE TYPE 1: list ───
+  SpeakerZone.speakers — list of Speaker objects
+  speakers list built in load_speakers_from_csv()
+  Used in: zone.py constructor, iteration, __len__
+
+─── MUTABLE TYPE 2: dict ───
+  SpeakerZone.eq_settings — {"bass": float, "treble": float}
+  zones dict — {zone_id: SpeakerZone}
+  results dict from run_balancer()
+  Spotify audio_features response dict
+
+─── MUTABLE TYPE 3 (bonus): set ───
+  Set of valid zone_ids during validation:
+    valid_zones = {2, 3, 4, 5, 7}
+
+─── IMMUTABLE TYPE 1: tuple ───
+  Speaker.freq_range — (freq_min, freq_max)
+  Return value of predict_zone_eq — (bass_gain, treble_gain)
+  Return value of get_song_features — (loudness, energy)
+
+─── IMMUTABLE TYPE 2: str ───
+  Speaker.name, SpeakerZone.zone_name, song title, Spotify track ID
+
+─── IMMUTABLE TYPE 3: int/float (numbers) ───
+  zone_id (int), sensitivity (float), loudness (float), energy (float),
+  gain values (float), n_neighbors (int)
+
+================================================================================
+10. OPERATOR OVERLOADS
+================================================================================
+
+─── __str__() ───
+  Speaker.__str__():
+    → "Speaker(Polk RC80i, 35Hz-20000Hz, 89dB, 8ohm)"
+  Subwoofer.__str__():
+    → "Subwoofer(Dayton SUB-1200, 25Hz-200Hz, crossover=120Hz)"
+  SpeakerZone.__str__():
+    → "Zone 2 (Overhead Speakers): 4 speakers | Bass=+3dB, Treble=-2dB"
+  SpotifyClient.__str__():
+    → "SpotifyClient(authenticated=True)"
+
+─── __eq__() ───  (additional overload #1)
+  Speaker.__eq__(other):
+    return self.name == other.name and self.freq_range == other.freq_range
+
+─── __len__() ───  (additional overload #2)
+  SpeakerZone.__len__():
+    return len(self.speakers)
+
+─── __add__() ───  (additional overload #3, bonus)
+  SpeakerZone.__add__(other):
+    Combines two zones into one merged zone. Useful for testing/flexibility.
+
+================================================================================
+11. DOCSTRINGS & COMMENTS
+================================================================================
+
+Every class and every function will have a docstring immediately below the
+definition line. Example:
+
+  class Speaker:
+      """Represents a single speaker unit with hardware specifications.
+
+      Attributes:
+          name (str): Model name of the speaker.
+          freq_range (tuple): (min_hz, max_hz) frequency response range.
+          sensitivity (float): Speaker sensitivity in dB.
+          impedance (float): Nominal impedance in ohms.
+          power_handling (float): Maximum RMS power handling in watts.
+      """
+
+  def train_zone_knn(zone_id, training_df, n_neighbors=3):
+      """Train a K-Nearest Neighbors regressor for a single speaker zone.
+
+      Filters the training DataFrame to the given zone, extracts Spotify
+      audio features (loudness, energy) as input and user-labeled ideal
+      bass/treble gains as output, and fits a KNeighborsRegressor.
+
+      Args:
+          zone_id (int): The zone to train a model for.
+          training_df (pd.DataFrame): Full training dataset with columns
+              zone_id, loudness, energy, ideal_bass, ideal_treble.
+          n_neighbors (int): Number of neighbors for KNN (default 3).
+
+      Returns:
+          KNeighborsRegressor: A fitted scikit-learn model.
+
+      Raises:
+          ValueError: If the zone has fewer samples than n_neighbors.
+      """
+
+  def predict_zone_eq(zone, loudness, energy):
+      """Predict optimal bass/treble gain for a zone given Spotify features.
+
+      Uses the zone's pre-trained KNN model to predict gain settings
+      from the song's loudness (dB) and energy (0-1) values.
+
+      Args:
+          zone (SpeakerZone): Zone with a trained knn_model attribute.
+          loudness (float): Spotify loudness in dB.
+          energy (float): Spotify energy score 0.0-1.0.
+
+      Returns:
+          tuple: (bass_gain, treble_gain) each clamped to [-10, +10] dB.
+      """
+
+Inline comments will explain key algorithmic decisions, e.g.:
+  # Use multi-output regression: KNN predicts [bass, treble] simultaneously
+  # Clamp to analog controller range of -10 to +10 dB
+  # Spotify loudness is typically -60 to 0; normalize for feature scaling
+
+================================================================================
+12. README OUTLINE
+================================================================================
+
+# Audio Balancing System for Diverse Speaker Sets
+
+## Team
+- Michael Moschello — mmoschel@stevens.edu — 10479727
+- Michael Savo — msavo@stevens.edu — [STEVENS ID]
+
+## Project Description
+
+### Overview
+When industrial audio systems are built, they use homogeneous speaker groups
+purpose-built to work together. Home DIY systems are clusters of diverse
+speakers with different performance ranges. This project uses a KNN machine-
+learning approach trained on user-labeled data to recommend per-zone bass and
+treble settings for any song, pulling real-time audio features from Spotify.
+
+### How It Works
+1. Speaker hardware specs are loaded from CSV.
+2. The user provides training data: for each zone, a set of songs with their
+   Spotify loudness/energy and the ideal bass/treble gain the user determined
+   by ear.
+3. A KNN regressor is trained per zone on (loudness, energy) → (bass, treble).
+4. At runtime, the user enters a song name. The system queries Spotify for
+   the song's loudness and energy, then each zone's KNN predicts the optimal
+   bass and treble gain.
+5. Results are displayed in the console and visualized with Matplotlib.
+
+### Dependencies / Libraries
+- Python 3.10+
+- spotipy >= 2.23        (Spotify Web API client)
+- scikit-learn >= 1.3     (KNN regressor)
+- numpy >= 1.24
+- pandas >= 2.0
+- matplotlib >= 3.7
+- pytest >= 7.0
+- python-dotenv >= 1.0    (optional, for .env loading)
+
+Install:
+  pip install -r requirements.txt
+
+### Spotify API Setup
+1. Go to https://developer.spotify.com/dashboard and create an app.
+2. Copy your Client ID and Client Secret.
+3. Create a .env file in the project root:
+     SPOTIPY_CLIENT_ID=your_client_id_here
+     SPOTIPY_CLIENT_SECRET=your_client_secret_here
+
+### File / Module Structure
+  [Reproduce tree from Section 2]
+
+## How to Run
+  python main.py
+  - Enter a song name when prompted
+  - View per-zone EQ recommendations in console and chart
+  - Type 'quit' to exit
+
+  To run tests:
+  pytest tests/
+
+## Main Contributions
+- Michael Moschello: [specific contributions]
+- Michael Savo: [specific contributions]
+
+================================================================================
+13. REQUIREMENT TRACEABILITY MATRIX
+================================================================================
+
+  REQ #  | REQUIREMENT                          | WHERE SATISFIED
+  -------|--------------------------------------|----------------------------------
+  1      | Two classes w/ relationship           | Speaker <-> Subwoofer (inheritance)
+         |                                      | SpeakerZone contains Speakers
+         |                                      | (composition)
+  2      | Two meaningful functions              | train_zone_knn(),
+         |                                      | predict_zone_eq()
+  3      | Two advanced libraries                | scikit-learn (knn_model.py),
+         |                                      | Matplotlib (visualizer.py);
+         |                                      | also spotipy, NumPy, Pandas
+  4      | Two exception scenarios + 2 pytests   | Spotify API errors, training
+         |                                      | data errors; test_knn_range,
+         |                                      | test_subwoofer_treble
+  5      | Meaningful data I/O                   | speakers.csv, training_data.csv,
+         |                                      | Spotify API (runtime HTTP)
+  6      | Two loops + two if statements         | for zones (train), for zones
+         |                                      | (predict), while input loop;
+         |                                      | if subwoofer, if no results
+  7      | Two mutable + two immutable types     | list, dict; tuple, str, int/float
+  8      | __str__ + additional overload         | __str__ on all classes; __eq__,
+         |                                      | __len__, __add__
+  9      | Docstrings + comments                 | Every class & function documented
+  10     | README with full details              | README.md per Section 12
+
+================================================================================
+END OF ARCHITECTURE DOCUMENT
+================================================================================

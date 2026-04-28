@@ -1,0 +1,97 @@
+Audio Balancing System for Diverse Speaker Sets
+Michael Moschello, mmoschel@stevens.edu, 10479727
+Michael Savo, msavo@stevens.edu, 20026290
+
+
+Section 1: Problem Description
+
+When industrial audio systems are constructed, they are a homogenous group of technically similar speakers tailored to multiple zones that are purpose built to work together. Yet most at home DIY systems are clusters of diverse speakers with different specifications and performance ranges due to cost limitations. This creates a gap between digital audio controllers, the song being played, and optimal performance as each zone needs to be manually tuned.
+
+Our project goal is to implement an algorithmic solution leveraging Python to, based on a song recommendation, determine the optimal bass and treble tuning for a speaker zone cluster from known performance ranges.
+
+To appropriately deploy scope for our algorithmic solution an appropriate testbed needs to be defined. Our testbed is a 6-zone system representing a diverse range of equipment, with each zone consisting of the same kind of speaker pairs. For purposes of project scope, zone 1, 6, and 8 (wireless) will not be included, leaving us with:
+
+    Zone 2: 2 sets of left and right overhead speaker pairs
+    Zone 3: One set of left and right speakers
+    Zone 4: One set of horizontal firing speakers
+    Zone 5: One set of horizontal firing speakers
+    Zone 7: Subwoofer
+
+Each zone is controlled through a digital audio controller with 2 sets of left and right channels to define balance. Balance will be set either in series or 50/50 and is out of scope for this project, as is volume which is set manually. The only two things the algorithm will make recommendations for are bass and treble, with positive or negative gain within the range of the controller (-10 to +10 dB).
+
+Our approach uses the Spotify Web API to pull audio features for any song the user requests. Rather than relying on a single loudness number, we focus on the perceptual and spectral features that Spotify provides because they more directly reflect the frequency content that matters for bass and treble tuning. We actually train two separate KNN models per zone, one for bass and one for treble, each using a different subset of Spotify features chosen for what they tell us about that part of the spectrum.
+
+For the bass model, the input features are energy, danceability, tempo, inverted acousticness (1 minus the raw value), and instrumentalness. Energy and danceability capture the intensity and rhythmic drive that correlate with low-end emphasis. Tempo matters because faster grooves often have a more prominent kick and bassline. Inverting acousticness means that production-heavy electronic tracks score higher, which makes sense since they tend to have a stronger sub-bass presence. Instrumentalness helps catch bassline-focused electronica and EDM.
+
+For the treble model, the input features are energy, valence, acousticness, and speechiness. Energy picks up aggressive cymbals and hi-hats that drive treble perception. Valence captures brightness since happier or more upbeat tracks often have more high-end sparkle. Acousticness is used directly here because acoustic instruments and strings can be treble-forward. Speechiness accounts for vocal sibilance, which adds significant high-frequency content.
+
+The training data is a CSV file we build manually: for each zone, we listen to a variety of songs and set the bass and treble to what sounds best, then record the Spotify features for that song alongside our ideal settings. Over time this gives us a labeled dataset per zone. At prediction time, the system pulls the relevant Spotify features for a new song, feeds them into each zone's bass KNN and treble KNN separately, and outputs the recommended gain values. Results are printed to the console and displayed visually using Matplotlib.
+
+
+Section 2: Plan to Meet Part 1 Requirements
+
+The backbone of our program is built around a few classes that model the real hardware. We have a Speaker class that stores specs like frequency range, sensitivity, impedance, and power handling for any individual speaker unit. Since the subwoofer in zone 7 behaves fundamentally differently from the other speakers, we extend Speaker with a Subwoofer subclass that adds a crossover frequency and overrides the bass and treble capability scoring methods. On top of that, a SpeakerZone class holds a list of Speaker objects to represent each physical zone as a group, so we get both an inheritance relationship and a composition relationship between our classes. Each of these classes has a constructor, relevant attributes, and methods that do actual work related to the problem.
+
+The two main functions that drive the whole system are train_zone_knn() and predict_zone_eq(). The first one takes the training CSV data, filters it down to a specific zone, and fits two separate scikit-learn KNeighborsRegressor models: one trained on the bass feature vector (energy, danceability, tempo, inverted acousticness, instrumentalness) to predict ideal bass gain, and another trained on the treble feature vector (energy, valence, acousticness, speechiness) to predict ideal treble gain. The second function takes a zone that already has both trained models attached to it along with a new song's Spotify features, runs each model on its respective feature subset, and returns the predicted bass and treble gain values. Beyond those two, we also have supporting functions for loading speakers from CSV, grouping them into zones, loading the training data, visualizing results, and orchestrating the full pipeline.
+
+For libraries, scikit-learn is at the heart of the prediction engine since the entire recommendation system is a KNN regressor. Matplotlib handles the visualization side, producing grouped bar charts that show the recommended bass and treble gain for each zone at a glance. We also rely on spotipy to talk to the Spotify API for real time song data, NumPy for the array operations scikit-learn needs and for clamping gain values to the controller's range, and Pandas for reading and filtering the CSV files.
+
+On the error handling side, we wrap the Spotify API calls so that if a song is not found or the API is unreachable, the program raises a clear error message instead of crashing. We also validate the training data when loading it, catching cases where the CSV file is missing entirely or where a particular zone does not have enough labeled samples to train a KNN model with the chosen K value. For testing, we plan to write a Pytest case that verifies predictions are always clamped within the -10 to +10 dB range no matter what inputs are fed in, and another that checks the subwoofer zone always predicts near-zero treble since all its training data will have ideal_treble set to 0.
+
+The program reads from two CSV files at startup: speakers.csv for the hardware specs and training_data.csv for the user-labeled tuning data, both loaded through Pandas. At runtime it also performs network I/O by querying the Spotify Web API for audio features. Console output shows the per-zone recommendations and Matplotlib renders them as a chart.
+
+Control flow is handled through several loops and conditionals throughout the code. For loops iterate through zones when training a model for each one and again when predicting EQ settings per zone. Another for loop builds Speaker objects from the CSV rows, using an if/else check on the type column to decide whether to create a regular Speaker or a Subwoofer. A while loop keeps the program running so the user can look up multiple songs in a session, and if statements validate Spotify search results and check for sufficient training data before fitting a model.
+
+We make use of both mutable and immutable data types naturally throughout the code. Lists hold the Speaker objects inside each zone, and dicts store things like the EQ settings and the collected results. On the immutable side, tuples represent the speaker frequency range and the return values from predictions, strings carry names and identifiers, and ints and floats are used everywhere for zone IDs, loudness values, gain numbers, and so on.
+
+For operator overloads, every class implements __str__() so you can print any object and get a readable summary of what it represents. Speaker also has __eq__() so two speakers with the same name and frequency range are treated as equal, and SpeakerZone has __len__() so you can check how many speakers are in a given zone.
+
+Every class and function will have a proper docstring right below the definition line explaining what it does, what it takes in, what it returns, and what exceptions it might raise. We will also include inline comments at key decision points in the code to explain things like why gains are clamped, why bass and treble use separate KNN models with different feature sets, and what each Spotify feature represents in terms of frequency content.
+
+The README will cover everything someone would need to understand and run the project: the title, both team members with contact info and Stevens IDs, an overview of the problem and our approach, all the dependencies and their versions, the file structure, step by step instructions for setting up Spotify credentials and running the program, how to run the tests, and what each team member contributed.
+
+
+Section 3: Plan to Meet Part 2 Requirements
+
+Beyond the core requirements, we plan to incorporate several additional Python features that fit naturally into the project.
+
+We will use list comprehensions in a few places instead of writing out full loops, for instance when pulling all the unique zone IDs from the training DataFrame or when building a quick list of speaker names from a zone for display. The math module will come into play for the speaker capability scoring since the relationship between frequency and perceived bass or treble ability is logarithmic, so something like math.log helps map the raw frequency range to a normalized 0 to 1 score in a way that makes physical sense. When we iterate over zones to print results or to position bars in the Matplotlib chart, we will use enumerate to cleanly get both the index and the zone object rather than tracking a counter manually. Finally, main.py will use an if __name__ == "__main__" guard so the interactive input loop only fires when the script is run directly and does not trigger when the test suite imports from the source modules.
+
+We may also end up using things like lambda for quick inline transforms or filter for cleaning data if it fits during implementation, but the four above are what we are committing to.
+
+
+Section 4: Timeline
+
+Week of March 9 (proposal week):
+  - Finalize and submit proposal
+  - Set up project folder structure and Git repository
+  - Create the speakers.csv file with hardware specs for all zones
+  - Register a Spotify developer app and get API credentials
+
+Week of March 16:
+  - Implement the Speaker and Subwoofer classes with all methods and overloads
+  - Implement the SpeakerZone class with composition and operator overloads
+  - Write the CSV loading functions for speakers.csv using Pandas
+  - Build a starter set of training data by listening through each zone with
+    8-10 songs and recording ideal bass/treble settings per zone
+
+Week of March 23:
+  - Implement the SpotifyClient wrapper using spotipy for authentication
+    and audio feature retrieval
+  - Implement train_zone_knn() and predict_zone_eq() with scikit-learn
+  - Write the load_training_data() function and data validation logic
+  - Get the end-to-end pipeline working: enter song name, get Spotify
+    features, predict per-zone EQ settings, print results
+
+Week of March 30:
+  - Implement the Matplotlib visualization for per-zone gain bar charts
+  - Add all exception handling (Spotify errors, file errors, insufficient data)
+  - Write Pytest test cases
+  - Finalize main.py with the while loop for user interaction
+
+Week of April 6:
+  - Final polish and code review
+  - Write all docstrings and inline comments
+  - Finalize the README with full project documentation
+  - Test everything end to end, fix any remaining bugs
+  - Submit final project
