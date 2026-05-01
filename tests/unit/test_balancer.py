@@ -17,7 +17,7 @@ from src.speaker import Speaker, Subwoofer, load_speakers_from_csv
 from src.zone import SpeakerZone, build_zones
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SPEAKERS_CSV = REPO_ROOT / "data" / "speakers.csv"
 TRAINING_CSV = REPO_ROOT / "data" / "training_data.csv"
 
