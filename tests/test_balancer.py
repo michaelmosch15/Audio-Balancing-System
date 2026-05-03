@@ -5,8 +5,22 @@ import pytest
 matplotlib.use("Agg")
 
 from src import balancer
+import src.spotify_client as spotify_module
 from src.spotify_client import SpotifyClient
 from src.visualizer import visualize_eq_recommendations
+
+
+FEATURE_ROW = {
+    "song_title": "Song A",
+    "artist": "Artist",
+    "energy": 0.75,
+    "danceability": 0.6,
+    "tempo": 120.0,
+    "acousticness": 0.2,
+    "instrumentalness": 0.0,
+    "valence": 0.5,
+    "speechiness": 0.05,
+}
 
 
 class FakeZone:
@@ -19,9 +33,8 @@ class FakeZone:
         self.knn_model = None
 
 
-def test_prepare_training_data_selects_highest_clarity_row():
-    """Raw clarity-grid data should become model-ready KNN labels."""
-    raw_data = pd.DataFrame(
+def raw_training_rows():
+    return pd.DataFrame(
         [
             {
                 "zone_id": 2,
@@ -30,8 +43,6 @@ def test_prepare_training_data_selects_highest_clarity_row():
                 "bass": -3,
                 "treble": 1,
                 "clarity": 2.0,
-                "loudness": -5.5,
-                "energy": 0.75,
             },
             {
                 "zone_id": 2,
@@ -40,44 +51,70 @@ def test_prepare_training_data_selects_highest_clarity_row():
                 "bass": 4,
                 "treble": -2,
                 "clarity": 5.0,
-                "loudness": -5.5,
-                "energy": 0.75,
             },
         ]
     )
 
-    prepared = balancer.prepare_training_data(raw_data)
+
+def song_feature_rows():
+    return pd.DataFrame([FEATURE_ROW])
+
+
+def test_prepare_training_data_merges_song_features_and_selects_highest_clarity_row():
+    """Raw clarity-grid data should merge features into model-ready KNN rows."""
+    prepared = balancer.prepare_training_data(raw_training_rows(), song_feature_rows())
 
     assert len(prepared) == 1
     row = prepared.iloc[0]
-    assert row["ideal_bass"] == 4
-    assert row["ideal_treble"] == -2
-    assert row["loudness"] == -5.5
+    assert row["bass"] == 4
+    assert row["treble"] == -2
     assert row["energy"] == 0.75
+    assert row["tempo"] == 120.0
 
 
-def test_prepare_training_data_requires_local_song_features():
-    """Spotify should not be used to fill deprecated audio feature fields."""
-    raw_data = pd.DataFrame(
-        [
-            {"zone_id": 2, "song_title": "Song A", "artist": "Artist", "bass": 4, "treble": -2, "clarity": 5.0},
-        ]
-    )
+def test_prepare_training_data_requires_song_feature_rows():
+    """Training songs must have matching rows in song_features.csv."""
+    with pytest.raises(ValueError, match="missing feature rows"):
+        balancer.prepare_training_data(raw_training_rows(), pd.DataFrame([{
+            **FEATURE_ROW,
+            "song_title": "Different Song",
+        }]))
 
-    with pytest.raises(ValueError, match="loudness and energy"):
-        balancer.prepare_training_data(raw_data)
+
+def test_validate_song_features_requires_feature_columns():
+    """song_features.csv must contain every KNN feature column."""
+    with pytest.raises(ValueError, match="missing required columns"):
+        balancer.validate_song_features(song_feature_rows().drop(columns=["energy"]))
+
+
+def test_validate_song_features_rejects_blank_values():
+    """Blank feature values should fail before model training."""
+    features = song_feature_rows().astype({"tempo": object})
+    features.loc[0, "tempo"] = ""
+
+    with pytest.raises(ValueError, match="blank or invalid"):
+        balancer.validate_song_features(features)
+
+
+def test_lookup_song_features_is_case_insensitive():
+    """Spotify metadata casing does not need to exactly match the CSV casing."""
+    features = balancer.lookup_song_features(song_feature_rows(), "song a", "artist")
+
+    assert features["energy"] == 0.75
+    assert features["tempo"] == 120.0
 
 
 def test_run_balancer_formats_zone_results(monkeypatch):
-    """run_balancer should call predict_zone_eq once per zone."""
+    """run_balancer should call predict_zone_eq once per zone with a feature dict."""
     zones = {2: FakeZone(2, "Overhead"), 7: FakeZone(7, "Subwoofer")}
 
-    def fake_predict(zone, loudness, energy):
+    def fake_predict(zone, song_features):
+        assert song_features["energy"] == 0.75
         return zone.zone_id, -zone.zone_id
 
     monkeypatch.setattr(balancer, "predict_zone_eq", fake_predict)
 
-    results = balancer.run_balancer(zones, loudness=-6.0, energy=0.8)
+    results = balancer.run_balancer(zones, {"energy": 0.75})
 
     assert results[2] == {"zone_name": "Overhead", "bass": 2.0, "treble": -2.0}
     assert results[7] == {"zone_name": "Subwoofer", "bass": 7.0, "treble": -7.0}
@@ -97,6 +134,18 @@ def test_visualizer_returns_figure_without_showing():
 
 def test_spotify_client_missing_credentials(monkeypatch):
     """SpotifyClient should reject startup without credentials."""
+    class FakeCredentials:
+        def __init__(self, client_id, client_secret):
+            self.client_id = client_id
+            self.client_secret = client_secret
+
+    class FakeSpotipyModule:
+        class Spotify:
+            def __init__(self, client_credentials_manager):
+                self.client_credentials_manager = client_credentials_manager
+
+    monkeypatch.setattr(spotify_module, "spotipy", FakeSpotipyModule)
+    monkeypatch.setattr(spotify_module, "SpotifyClientCredentials", FakeCredentials)
     monkeypatch.delenv("SPOTIPY_CLIENT_ID", raising=False)
     monkeypatch.delenv("SPOTIPY_CLIENT_SECRET", raising=False)
 
@@ -145,3 +194,5 @@ def test_spotify_client_get_song_metadata_with_fake_spotify():
     assert features["spotify_url"] == "https://open.spotify.com/track/track-123"
     assert "loudness" not in features
     assert "energy" not in features
+
+
