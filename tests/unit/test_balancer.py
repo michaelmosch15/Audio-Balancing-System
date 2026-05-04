@@ -1,16 +1,16 @@
 """Tests for the data + ML pipeline (Michael M's components).
 
 Covers the speaker.csv -> Speaker/Subwoofer -> SpeakerZone -> KNN
-train -> predict chain. A deterministic stub stands in for the live
-Spotify lookup so the tests stay offline and reproducible.
+train -> predict chain using song feature columns from song_features.csv.
 """
 
 from pathlib import Path
 
 import pytest
 
+from src.balancer import load_song_features, prepare_training_data
 from src.knn_model import (
-    BASS_FEATURES, TREBLE_FEATURES,
+    BASS_FEATURES, TREBLE_FEATURES, SONG_FEATURE_COLUMNS,
     load_training_data, predict_zone_eq, train_all_zones, train_zone_knn,
 )
 from src.speaker import Speaker, Subwoofer, load_speakers_from_csv
@@ -20,25 +20,7 @@ from src.zone import SpeakerZone, build_zones
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SPEAKERS_CSV = REPO_ROOT / "data" / "speakers.csv"
 TRAINING_CSV = REPO_ROOT / "data" / "training_data.csv"
-
-
-def stub_features(song, artist):
-    """Deterministic stand-in for the Spotify client.
-
-    Hashes the song title into [0, 1] so each title yields a distinct
-    but reproducible feature vector. Tempo is mapped into a realistic
-    BPM range.
-    """
-    s = (abs(hash(song)) % 1000) / 1000.0
-    return {
-        "energy": s,
-        "danceability": s * 0.9 + 0.05,
-        "tempo": 60.0 + s * 120.0,
-        "acousticness": 1.0 - s,
-        "instrumentalness": s * 0.5,
-        "valence": (s + 0.3) % 1.0,
-        "speechiness": s * 0.4,
-    }
+SONG_FEATURES_CSV = REPO_ROOT / "data" / "song_features.csv"
 
 
 @pytest.fixture(scope="module")
@@ -52,13 +34,29 @@ def zones(speakers):
 
 
 @pytest.fixture(scope="module")
-def training_df():
+def raw_training_df():
     return load_training_data(TRAINING_CSV)
 
 
 @pytest.fixture(scope="module")
+def song_features_df():
+    return load_song_features(SONG_FEATURES_CSV)
+
+
+@pytest.fixture(scope="module")
+def training_df(raw_training_df, song_features_df):
+    return prepare_training_data(raw_training_df, song_features_df)
+
+
+@pytest.fixture(scope="module")
+def sample_features(song_features_df):
+    row = song_features_df.iloc[0]
+    return {col: float(row[col]) for col in SONG_FEATURE_COLUMNS}
+
+
+@pytest.fixture(scope="module")
 def trained_zones(zones, training_df):
-    train_all_zones(zones, training_df, stub_features, n_neighbors=3)
+    train_all_zones(zones, training_df, n_neighbors=3)
     return zones
 
 
@@ -151,17 +149,23 @@ class TestSpeakerLoadAndZoneComposition:
 
 class TestTrainingDataLoader:
 
-    def test_load_collapses_grid(self, training_df):
+    def test_load_collapses_grid(self, raw_training_df):
         # After collapsing each (zone, song) sweep, every key is unique.
-        dup_count = training_df.duplicated(
+        dup_count = raw_training_df.duplicated(
             subset=["zone_id", "song_title", "artist"]
         ).sum()
         assert dup_count == 0
-        assert (training_df["clarity"] >= 0).all()
+        assert (raw_training_df["clarity"] >= 0).all()
 
-    def test_missing_file_raises(self, tmp_path):
+    def test_prepare_training_data_merges_features(self, training_df):
+        assert all(col in training_df.columns for col in SONG_FEATURE_COLUMNS)
+        assert not training_df.loc[:, list(SONG_FEATURE_COLUMNS)].isna().any().any()
+
+    def test_missing_file_raises(self):
+        missing = REPO_ROOT / "data" / "definitely_missing_training.csv"
+        assert not missing.exists()
         with pytest.raises(FileNotFoundError):
-            load_training_data(tmp_path / "nope.csv")
+            load_training_data(missing)
 
 
 # KNN training + prediction
@@ -170,25 +174,22 @@ class TestKnnPipeline:
 
     def test_train_returns_two_models(self, training_df):
         bass_model, treble_model = train_zone_knn(
-            zone_id=3, training_df=training_df,
-            feature_lookup=stub_features, n_neighbors=3,
+            zone_id=3, training_df=training_df, n_neighbors=3,
         )
         assert bass_model.n_features_in_ == len(BASS_FEATURES)
         assert treble_model.n_features_in_ == len(TREBLE_FEATURES)
 
-    def test_predict_in_controller_range(self, trained_zones):
-        features = stub_features("Some New Song", "Some Artist")
+    def test_predict_in_controller_range(self, trained_zones, sample_features):
         for zid, zone in trained_zones.items():
-            bass, treble = predict_zone_eq(zone, features)
+            bass, treble = predict_zone_eq(zone, sample_features)
             assert -10.0 <= bass <= 10.0, f"bass out of range in zone {zid}"
             assert -10.0 <= treble <= 10.0, f"treble out of range in zone {zid}"
             # set_eq side effect should leave the zone holding the latest values.
             assert zone.eq_settings["bass"] == bass
             assert zone.eq_settings["treble"] == treble
 
-    def test_subwoofer_treble_forced_to_zero(self, trained_zones):
-        features = stub_features("Loud Track", None)
-        _, treble = predict_zone_eq(trained_zones[7], features)
+    def test_subwoofer_treble_forced_to_zero(self, trained_zones, sample_features):
+        _, treble = predict_zone_eq(trained_zones[7], sample_features)
         assert treble == 0.0
 
 
@@ -200,17 +201,31 @@ class TestKnnExceptions:
         n = len(training_df[training_df["zone_id"] == 7])
         with pytest.raises(ValueError, match="need at least n_neighbors"):
             train_zone_knn(
-                zone_id=7, training_df=training_df,
-                feature_lookup=stub_features, n_neighbors=n + 1,
+                zone_id=7, training_df=training_df, n_neighbors=n + 1,
             )
 
-    def test_predict_without_trained_model(self):
+    def test_training_with_missing_feature_column(self, training_df):
+        with pytest.raises(ValueError, match="missing song feature columns"):
+            train_zone_knn(
+                zone_id=3,
+                training_df=training_df.drop(columns=["energy"]),
+                n_neighbors=3,
+            )
+
+    def test_training_with_nan_feature_value(self, training_df):
+        broken = training_df.copy()
+        broken.loc[0, "energy"] = None
+
+        with pytest.raises(ValueError, match="blank or invalid"):
+            train_zone_knn(zone_id=3, training_df=broken, n_neighbors=3)
+
+    def test_predict_without_trained_model(self, sample_features):
         zone = SpeakerZone(
             zone_id=99, zone_name="Test Zone",
             speakers=[Speaker("X", 40, 20000, 89, 8, 100, zone_id=99)],
         )
         with pytest.raises(RuntimeError, match="no trained KNN model"):
-            predict_zone_eq(zone, stub_features("song", None))
+            predict_zone_eq(zone, sample_features)
 
     def test_predict_with_missing_feature(self, trained_zones):
         with pytest.raises(ValueError, match="missing required key"):

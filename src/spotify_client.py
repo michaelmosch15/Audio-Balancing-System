@@ -1,65 +1,66 @@
-
-"stuff i was trying out with the spotify client stuff"
+"""Spotify API wrapper used to retrieve non-deprecated track metadata."""
 
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Any
 
-import spotipy
-from dotenv import load_dotenv
-from spotipy.oauth2 import SpotifyClientCredentials
-
-
-REQUIRED_FEATURE_KEYS: tuple[str, ...] = (
-    "loudness",
-    "energy",
-    "danceability",
-    "tempo",
-    "acousticness",
-    "instrumentalness",
-    "valence",
-    "speechiness",
-)
+try:
+    import spotipy
+    from spotipy.oauth2 import SpotifyClientCredentials
+except ImportError:  # pragma: no cover - exercised only when dependency is absent
+    spotipy = None
+    SpotifyClientCredentials = None
 
 
 class SpotifyClient:
-    def __init__(
-        self,
-        client_id: Optional[str] = None,
-        client_secret: Optional[str] = None,
-    ) -> None:
-        load_dotenv()
+    """Authenticate with Spotify and search public track metadata."""
 
-        self.client_id = client_id or os.environ.get("SPOTIPY_CLIENT_ID", "")
-        self.client_secret = client_secret or os.environ.get(
-            "SPOTIPY_CLIENT_SECRET", ""
-        )
+    def __init__(self, client_id: str | None = None, client_secret: str | None = None):
+        """Create an authenticated Spotify client using client credentials.
+
+        Args:
+            client_id: Spotify application client ID. Falls back to the
+                SPOTIPY_CLIENT_ID environment variable.
+            client_secret: Spotify application secret. Falls back to the
+                SPOTIPY_CLIENT_SECRET environment variable.
+
+        Raises:
+            ImportError: If spotipy is not installed.
+            ValueError: If credentials are missing.
+        """
+        if spotipy is None or SpotifyClientCredentials is None:
+            raise ImportError("spotipy is required. Install dependencies with pip install -r requirements.txt")
+
+        self.client_id = client_id or os.getenv("SPOTIPY_CLIENT_ID")
+        self.client_secret = client_secret or os.getenv("SPOTIPY_CLIENT_SECRET")
 
         if not self.client_id or not self.client_secret:
-            raise ValueError(
-                "Spotify credentials not set. Define SPOTIPY_CLIENT_ID and "
-                "SPOTIPY_CLIENT_SECRET in your environment or .env file."
-            )
+            raise ValueError("Spotify credentials not set. Check SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET.")
 
-        try:
-            auth_manager = SpotifyClientCredentials(
-                client_id=self.client_id,
-                client_secret=self.client_secret,
-            )
-            self.sp = spotipy.Spotify(auth_manager=auth_manager)
-        except spotipy.SpotifyOauthError as exc:
-            raise ConnectionError(
-                f"Failed to authenticate with Spotify: {exc}"
-            ) from exc
+        credentials = SpotifyClientCredentials(
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+        )
+        self.sp = spotipy.Spotify(client_credentials_manager=credentials)
 
-    def search_track(
-        self,
-        song_name: str,
-        artist: Optional[str] = None,
-    ) -> dict:
+    def search_track(self, song_name: str, artist: str | None = None) -> dict[str, Any]:
+        """Search Spotify for a track and return non-deprecated metadata.
+
+        Args:
+            song_name: Track title to search for.
+            artist: Optional artist name to narrow the search.
+
+        Returns:
+            A dictionary with track id, name, artist, album, release date,
+            duration, popularity, and Spotify URL.
+
+        Raises:
+            ValueError: If the song name is empty or no result is found.
+            ConnectionError: If Spotify rejects or fails the request.
+        """
         if not song_name or not song_name.strip():
-            raise ValueError("song_name must be a non-empty string.")
+            raise ValueError("Song name cannot be empty.")
 
         query = f'track:"{song_name.strip()}"'
         if artist and artist.strip():
@@ -67,56 +68,52 @@ class SpotifyClient:
 
         try:
             results = self.sp.search(q=query, type="track", limit=1)
-        except spotipy.SpotifyException as exc:
-            raise ConnectionError(f"Spotify API error during search: {exc}") from exc
+        except Exception as exc:  # spotipy raises SpotifyException, plus network errors
+            raise ConnectionError(f"Spotify API search failed: {exc}") from exc
 
         items = results.get("tracks", {}).get("items", [])
         if not items:
-            raise ValueError(
-                f"No track found on Spotify for: '{song_name}'"
-                + (f" by '{artist}'" if artist else "")
-            )
+            requested = f"{song_name} by {artist}" if artist else song_name
+            raise ValueError(f"No track found on Spotify for: {requested}")
 
         track = items[0]
+        artists = track.get("artists", [])
+        primary_artist = artists[0].get("name", "Unknown Artist") if artists else "Unknown Artist"
+        album = track.get("album", {})
+        external_urls = track.get("external_urls", {})
         return {
-            "track_id": track["id"],
-            "name": track["name"],
-            "artist": track["artists"][0]["name"] if track["artists"] else "",
+            "id": track["id"],
+            "name": track.get("name", song_name),
+            "artist": primary_artist,
+            "album": album.get("name"),
+            "release_date": album.get("release_date"),
+            "duration_ms": track.get("duration_ms"),
+            "popularity": track.get("popularity"),
+            "spotify_url": external_urls.get("spotify"),
         }
 
-    def get_audio_features(self, track_id: str) -> dict:
-        if not track_id:
-            raise ValueError("track_id must be a non-empty string.")
+    def get_song_metadata(self, song_name: str, artist: str | None = None) -> dict[str, Any]:
+        """Search Spotify and return non-deprecated track metadata.
 
-        try:
-            payload = self.sp.audio_features([track_id])
-        except spotipy.SpotifyException as exc:
-            raise ConnectionError(
-                f"Spotify API error fetching audio features: {exc}"
-            ) from exc
+        Args:
+            song_name: Track title to search for.
+            artist: Optional artist name to narrow the search.
 
-        if not payload or payload[0] is None:
-            raise ValueError(
-                f"Spotify returned no audio features for track_id '{track_id}'."
-            )
+        Returns:
+            The same metadata dictionary returned by search_track().
+        """
+        return self.search_track(song_name, artist)
 
-        raw = payload[0]
-        missing = [k for k in REQUIRED_FEATURE_KEYS if k not in raw]
-        if missing:
-            raise ValueError(
-                f"Spotify audio-features payload is missing keys: {missing}"
-            )
+    def get_song_features(self, song_name: str, artist: str | None = None) -> dict[str, Any]:
+        """Backward-compatible alias for get_song_metadata().
 
-        return {key: float(raw[key]) for key in REQUIRED_FEATURE_KEYS}
-
-    def get_song_features(
-        self,
-        song_name: str,
-        artist: Optional[str] = None,
-    ) -> dict:
-        track = self.search_track(song_name, artist=artist)
-        features = self.get_audio_features(track["track_id"])
-        return {**features, **track}
+        Spotify removed access to the Audio Features endpoint for new Web API
+        apps, so this method intentionally returns metadata only. Loudness,
+        energy, or replacement song descriptors must come from local data or
+        user input.
+        """
+        return self.get_song_metadata(song_name, artist)
 
     def __str__(self) -> str:
-        return f"SpotifyClient(authenticated={self.sp is not None})"
+        """Return a readable authentication summary."""
+        return "SpotifyClient(authenticated=True)"

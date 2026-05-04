@@ -1,4 +1,4 @@
-zone_id,speaker_model,song_title,artist,volume,bass,treble,clarity
+zone_id,speaker_model,song_title,artist,volume,bass,treble,clarity,loudness,energy
 2,Polk RC80i x4,Blinding Lights,The Weeknd,40,-9,-9,3.0
 2,Polk RC80i x4,Blinding Lights,The Weeknd,40,-9,-6,4.25
 2,Polk RC80i x4,Blinding Lights,The Weeknd,40,-9,-3,4.75
