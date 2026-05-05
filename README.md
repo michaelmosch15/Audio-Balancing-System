@@ -35,7 +35,7 @@ SpeakerBalence/
 │   └── visualizer.py          # matplotlib bar chart of EQ recommendations
 ├── tests/
 │   ├── test_balancer.py
-│   └── unit/test_balancer.py
+│   └── unit/test_pipeline.py
 └── planning/
     ├── PROPOSAL.txt
     └── ARCHITECTURE.txt
@@ -84,6 +84,21 @@ SPOTIPY_CLIENT_SECRET=your_client_secret_here
 
 `.env` is in `.gitignore` so it won't get pushed.
 
+### Adding more songs
+
+To make the program recommend EQ for a new song, add one row to `data/song_features.csv`. You do not need to add that song to `data/training_data.csv` unless you also want the model to learn from your own hand-tuned EQ ratings for that song. In other words, `song_features.csv` controls which songs can be predicted, while `training_data.csv` controls what the KNN model learns from.
+
+Use Chosic's song analyzer as the preferred source for feature values: https://www.chosic.com/music-genre-finder/. Chosic is useful because it reports Spotify-style audio features such as energy, danceability, acousticness, instrumentalness, valence, speechiness, and tempo. These values are based on Spotify's audio analysis data, which normal Spotify Web API developers no longer have direct access to through the old Audio Features endpoint.
+
+Keep the CSV song title and artist as clean, canonical names. The program can handle common Spotify metadata variants like radio edits, fuller artist names, and classical catalog numbers.
+
+Example row format:
+
+```csv
+song_title,artist,energy,danceability,tempo,acousticness,instrumentalness,valence,speechiness
+Black Hole Sun,Soundgarden,0.83,0.35,105.0,0.00,0.00,0.15,0.04
+```
+
 ## Running
 
 ```powershell
@@ -118,8 +133,6 @@ python -m pytest
 Test files live in `tests/`. They cover the Speaker/Zone classes, the KNN training/prediction wrapper, the balancer orchestration, and the Spotify client (with mocked responses so the tests don't hit the network).
 
 ## How the rubric requirements are met
-
-This is mostly here so the TA doesn't have to hunt for things.
 
 **Part 1 — fundamentals**
 - *Classes:* `Speaker`, `Subwoofer(Speaker)` (inheritance), `SpeakerZone` (composition of Speakers), `SpotifyClient`.
