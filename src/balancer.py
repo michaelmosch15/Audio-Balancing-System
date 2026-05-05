@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,30 @@ def _zone_name(zone_id: int, zone: Any) -> str:
 
 def _normalized_text(value: Any) -> str:
     return str(value).strip().casefold()
+
+
+def _canonical_song_title(value: Any) -> str:
+    """Normalize common Spotify title variants to a CSV-friendly title."""
+    title = _normalized_text(value)
+    title = re.sub(r"\s*[\(\[][^)\]]*(edit|remaster|version|mix|live|mono|stereo)[^)\]]*[\)\]]\s*", "", title)
+    title = re.split(r"\s+-\s+(?:radio\s+edit|edit|remaster(?:ed)?|.*version|.*mix|live|mono|stereo)\b", title, maxsplit=1)[0]
+    title = re.sub(r",\s*[a-z]{1,4}\.?\s*\d+(?:[a-z])?$", "", title)
+    return " ".join(title.split())
+
+
+def _normalized_tokens(value: Any) -> set[str]:
+    """Return lowercase word tokens, ignoring leading artist boilerplate."""
+    tokens = re.findall(r"[a-z0-9]+", _normalized_text(value))
+    return {token for token in tokens if token not in {"the", "and"}}
+
+
+def _artist_names_compatible(left: Any, right: Any) -> bool:
+    """Allow metadata artist names that contain the CSV artist name."""
+    left_tokens = _normalized_tokens(left)
+    right_tokens = _normalized_tokens(right)
+    return bool(left_tokens and right_tokens) and (
+        left_tokens.issubset(right_tokens) or right_tokens.issubset(left_tokens)
+    )
 
 
 def _song_key(row: pd.Series | dict[str, Any]) -> tuple[str, str]:
@@ -164,14 +189,25 @@ def lookup_song_features(
     song_title: str,
     artist: str | None = None,
 ) -> dict[str, float]:
-    """Return the feature dictionary for a song, using case-insensitive matching."""
+    """Return the feature dictionary for a song, using forgiving artist matching."""
     features = validate_song_features(song_features_df)
     title_key = _normalized_text(song_title)
     matches = features[features["song_title"].map(_normalized_text) == title_key]
+    if matches.empty:
+        canonical_title_key = _canonical_song_title(song_title)
+        matches = features[
+            features["song_title"].map(_canonical_song_title) == canonical_title_key
+        ]
 
     if artist:
         artist_key = _normalized_text(artist)
-        matches = matches[matches["artist"].map(_normalized_text) == artist_key]
+        exact_matches = matches[matches["artist"].map(_normalized_text) == artist_key]
+        if exact_matches.empty:
+            matches = matches[
+                matches["artist"].map(lambda csv_artist: _artist_names_compatible(csv_artist, artist))
+            ]
+        else:
+            matches = exact_matches
 
     if matches.empty:
         label = f"{song_title} by {artist}" if artist else song_title

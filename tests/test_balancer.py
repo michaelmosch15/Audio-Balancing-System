@@ -104,6 +104,54 @@ def test_lookup_song_features_is_case_insensitive():
     assert features["tempo"] == 120.0
 
 
+def test_lookup_song_features_accepts_artist_metadata_variants():
+    """Spotify can return a fuller artist name than the curated feature CSV."""
+    features = balancer.lookup_song_features(
+        pd.DataFrame([{
+            **FEATURE_ROW,
+            "song_title": "Take Five",
+            "artist": "Dave Brubeck",
+        }]),
+        "Take Five",
+        "The Dave Brubeck Quartet",
+    )
+
+    assert features["energy"] == 0.75
+    assert features["tempo"] == 120.0
+
+
+def test_lookup_song_features_accepts_spotify_title_versions():
+    """Spotify can return a versioned title while the CSV stores the canonical title."""
+    features = balancer.lookup_song_features(
+        pd.DataFrame([{
+            **FEATURE_ROW,
+            "song_title": "Strobe",
+            "artist": "Deadmau5",
+        }]),
+        "Strobe - Radio Edit",
+        "Deadmau5",
+    )
+
+    assert features["energy"] == 0.75
+    assert features["tempo"] == 120.0
+
+
+def test_lookup_song_features_accepts_classical_catalog_numbers():
+    """Classical metadata can include catalog numbers absent from the CSV title."""
+    features = balancer.lookup_song_features(
+        pd.DataFrame([{
+            **FEATURE_ROW,
+            "song_title": "Clair de Lune",
+            "artist": "Debussy",
+        }]),
+        "Clair de Lune, L. 32",
+        "Claude Debussy",
+    )
+
+    assert features["energy"] == 0.75
+    assert features["tempo"] == 120.0
+
+
 def test_run_balancer_formats_zone_results(monkeypatch):
     """run_balancer should call predict_zone_eq once per zone with a feature dict."""
     zones = {2: FakeZone(2, "Overhead"), 7: FakeZone(7, "Subwoofer")}
