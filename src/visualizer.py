@@ -30,7 +30,8 @@ def visualize_eq_recommendations(
     bass_values = [data.get("bass", 0.0) for _, data in sorted_items]
     treble_values = [data.get("treble", 0.0) for _, data in sorted_items]
 
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig_width = max(10, len(sorted_items) * 2.2)
+    fig, ax = plt.subplots(figsize=(fig_width, 6.5))
 
     if sorted_items:
         x_positions = list(range(len(sorted_items)))
@@ -41,7 +42,8 @@ def visualize_eq_recommendations(
         ax.bar(bass_positions, bass_values, width, label="Bass", color="#2E86AB")
         ax.bar(treble_positions, treble_values, width, label="Treble", color="#F18F01")
         ax.set_xticks(x_positions)
-        ax.set_xticklabels(labels)
+        ax.set_xticklabels(labels, rotation=20, ha="right")
+        ax.margins(x=0.08)
         ax.legend()
     else:
         ax.text(0.5, 0.5, "No recommendations available", ha="center", va="center", transform=ax.transAxes)
